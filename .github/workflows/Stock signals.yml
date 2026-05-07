@@ -2,8 +2,8 @@ name: StockBot Daily Signals
 
 on:
   schedule:
-    - cron: '30 3 * * 1-5'   # 9:00 AM IST = Indian market signals
-    - cron: '30 12 * * 1-5'  # 6:00 PM IST = US market signals
+    - cron: '30 3 * * 1-5'    # 9:00 AM IST = Indian market
+    - cron: '30 12 * * 1-5'   # 6:00 PM IST = US market
   workflow_dispatch:
     inputs:
       market:
@@ -11,21 +11,16 @@ on:
         required: true
         default: 'IN'
         type: choice
-        options:
-          - IN
-          - US
+        options: [IN, US]
 
 jobs:
   send-stock-signals:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -34,10 +29,9 @@ jobs:
 
       - name: Determine market
         run: |
-          UTC_HOUR=$(date -u +%H | sed 's/^0//')
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "MARKET=${{ github.event.inputs.market }}" >> $GITHUB_ENV
-          elif [ "$UTC_HOUR" -lt 10 ]; then
+          elif [ "$(date -u +%H | sed 's/^0//')" -lt 10 ]; then
             echo "MARKET=IN" >> $GITHUB_ENV
           else
             echo "MARKET=US" >> $GITHUB_ENV
@@ -53,13 +47,13 @@ jobs:
           MARKET:           ${{ env.MARKET }}
         run: python signal_bot.py
 
-      - name: Notify failure via Telegram
+      - name: Notify failure
         if: failure()
         env:
           TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          MSG="⚠️ StockBot failed (${{ env.MARKET }}) — $(TZ='Asia/Kolkata' date '+%d %b %I:%M %p IST'). Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          MSG="⚠️ StockBot FAILED (${{ env.MARKET }}) at $(TZ=Asia/Kolkata date '+%d %b %I:%M %p IST'). See: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=${MSG}" || true
