@@ -1,0 +1,123 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║   StockBot AI — GitHub Actions Workflow (100% FREE)         ║
+# ║                                                              ║
+# ║   Schedule:                                                  ║
+# ║     🇮🇳  9:00 AM IST  = 3:30 UTC  (Indian market open)       ║
+# ║     🇺🇸  6:00 PM IST  = 12:30 UTC (US pre-market)            ║
+# ║                                                              ║
+# ║   How to use:                                                ║
+# ║     1. Create free GitHub account at github.com              ║
+# ║     2. Create new repo → Add this file at:                   ║
+# ║          .github/workflows/stock-signals.yml                 ║
+# ║     3. Add signal_bot.py to repo root                        ║
+# ║     4. Add Secrets: Settings > Secrets > Actions > New       ║
+# ║          GEMINI_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID    ║
+# ║     5. Push → Auto runs every weekday at both times!         ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+name: 🤖 StockBot Daily Signals
+
+on:
+  schedule:
+    # ─── 9:00 AM IST = 3:30 AM UTC ────────────────────────────────────
+    # Runs Mon–Fri (weekdays only) for Indian market morning alert
+    - cron: '30 3 * * 1-5'
+
+    # ─── 6:00 PM IST = 12:30 PM UTC ───────────────────────────────────
+    # Runs Mon–Fri for US market pre-open alert
+    - cron: '30 12 * * 1-5'
+
+  # ─── Manual trigger (for testing) ──────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      market:
+        description: 'Market to analyze (IN = India, US = America)'
+        required: true
+        default: 'IN'
+        type: choice
+        options:
+          - IN
+          - US
+
+jobs:
+  send-stock-signals:
+    name: Generate & Send Stock Signals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Checkout code ────────────────────────────────────────────
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ─────────────────────────────────────────────
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. Install dependencies ─────────────────────────────────────
+      - name: 📦 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            yfinance==0.2.38 \
+            pandas==2.1.4 \
+            requests==2.31.0
+
+      # ── 4. Determine which market to run ────────────────────────────
+      #    Based on UTC hour: <10 = morning run = India, >=10 = evening = US
+      #    Manual override wins if workflow_dispatch was used
+      - name: 🌍 Determine market (IN or US)
+        id: market
+        run: |
+          UTC_HOUR=$(date -u +%H | sed 's/^0//')
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MARKET="${{ github.event.inputs.market }}"
+            echo "Manual trigger → Market: $MARKET"
+          elif [ "$UTC_HOUR" -lt 10 ]; then
+            MARKET="IN"
+            echo "Morning UTC run → Indian Market (9:00 AM IST)"
+          else
+            MARKET="US"
+            echo "Midday UTC run  → US Market (6:00 PM IST)"
+          fi
+
+          echo "MARKET=$MARKET" >> $GITHUB_ENV
+          echo "Selected market: $MARKET"
+
+      # ── 5. Show IST time in logs ─────────────────────────────────────
+      - name: 🕐 Show current IST time
+        run: |
+          IST_TIME=$(TZ="Asia/Kolkata" date "+%d %b %Y  %I:%M %p IST")
+          UTC_TIME=$(date -u "+%d %b %Y %H:%M UTC")
+          echo "IST: $IST_TIME"
+          echo "UTC: $UTC_TIME"
+          echo "Market: ${{ env.MARKET }}"
+
+      # ── 6. Run the signal bot ────────────────────────────────────────
+      - name: 🤖 Run StockBot AI Signal Generator
+        env:
+          GEMINI_API_KEY:   ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WA_PHONE:         ${{ secrets.WA_PHONE }}
+          WA_APIKEY:        ${{ secrets.WA_APIKEY }}
+          MARKET:           ${{ env.MARKET }}
+        run: python signal_bot.py
+
+      # ── 7. Notify on failure ────────────────────────────────────────
+      - name: ❌ Notify failure (via Telegram)
+        if: failure()
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          MSG="⚠️ StockBot failed for ${{ env.MARKET }} market at $(TZ='Asia/Kolkata' date '+%d %b %I:%M %p IST'). Check GitHub Actions logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${MSG}" > /dev/null
+          fi
